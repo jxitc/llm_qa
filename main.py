@@ -8,7 +8,9 @@ qa = LlmQA([])  # empty allowlist
 
 @app.route('/prepare_doc', methods=['POST'])
 def init_doc():
-    qa.prepare_doc(init_query=None)
+    data = request.get_json()
+    query = data['query']
+    qa.prepare_doc(init_query=query)
     return json.dumps({'sucess': True})
 
 @app.route('/query', methods=['POST'])

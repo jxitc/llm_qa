@@ -1,11 +1,19 @@
 import os
+import requests
 from langchain.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain.embeddings import OpenAIEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
 
 class Retriever(object):
+    @staticmethod
+    def get_all(query):
+        # TODO: set remote location in os env or config file
+        response = requests.get('http://47.92.127.176:13240/xiyou/aiAnalysis/reptiles?query=' + query)
+        return response.json()['data']  # TODO: error handling
+        
     @staticmethod
     def get_url(query, allowlist):
         """
@@ -40,17 +48,32 @@ class LlmQA(object):
         # TODO(xiao): use log
         print(f"done processing db, count: {num_doc}")
         return db
-        
-        
+
+    @staticmethod
+    def __split_all_urls(data_list):
+      all_results = []
+      for data in data_list:
+        if data['uriType'] == 'webpage':
+          loader = WebBaseLoader(data['uri'])
+          text_splitter = RecursiveCharacterTextSplitter(
+              chunk_size = 1000,
+              chunk_overlap  = 20,
+              length_function = len,
+          )
+          result = loader.load_and_split(text_splitter)
+          all_results += result
+          print("added {} entries from {}".format(len(result), data['uri']))
+        else:
+          print("unsupported uriType: {}".format(data['uriType']))
+      return all_results
+
     def prepare_doc(self, init_query):
         """
         Only query once when use started the conversation
         """
-        # TODO(xiao): here we start using PDF path for testing. 
-        pdf_path = Retriever.get_pdf_path(init_query, self.allowlist)
-        loader = PyPDFLoader(pdf_path)
-        pages = loader.load_and_split() # remove \n in parsed and splitted pdf
-        self.db = self.__build_similarity_db(pages)
+        all_url_data_list = Retriever.get_all(init_query)
+        all_url_split_entries = self.__split_all_urls(all_url_data_list)
+        self.db = self.__build_similarity_db(all_url_split_entries)
 
     def answer(self, query):
         if not query:
@@ -60,11 +83,11 @@ class LlmQA(object):
         print(f"found {num_found_result} similar docs for user query {query}")
         chain = load_qa_chain(OpenAI(temperature=0), chain_type="stuff")
         # TODO(xiao): due to LLM word limitation, only use the first doc
-        return chain.run(input_documents=similar_results[:1], question=query)
-        
-        
+        return chain.run(input_documents=similar_results[:3], question=query)
+
 if __name__ == '__main__':
     qa = LlmQA([])  # TODO: empty allowlist
-    init_query = u"这里面的数字化机会有哪些？"
+    init_query = u"如何解读数字农业农村发展规划"
     qa.prepare_doc(init_query)
-    print(qa.answer(init_query))
+    query = u"这里面的数字化机会有哪些？"
+    print(qa.answer(query))

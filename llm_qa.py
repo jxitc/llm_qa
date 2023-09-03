@@ -1,11 +1,14 @@
 import os
 import requests
+from typing import Any, Union
 from langchain.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.llms import OpenAI
 from langchain.chains.question_answering import load_qa_chain
+from langchain.prompts import PromptTemplate
+
 
 class Retriever(object):
     @staticmethod
@@ -31,6 +34,24 @@ class Retriever(object):
         """
         return "./test/test.pdf"
 
+class UTF8WebBaseLoader(WebBaseLoader):
+    def _scrape(self, url: str, parser: Union[str, None] = None) -> Any:
+        # https://github.com/langchain-ai/langchain/issues/9925
+        from bs4 import BeautifulSoup
+
+        if parser is None:
+            if url.endswith(".xml"):
+                parser = "xml"
+            else:
+                parser = self.default_parser
+
+        self._check_parser(parser)
+
+        html_doc = self.session.get(url)
+        html_doc.encoding = 'utf-8'
+        return BeautifulSoup(html_doc.text, parser)
+
+
 class LlmQA(object):
     def __init__(self, allowlist):
         self.allowlist = allowlist
@@ -54,9 +75,9 @@ class LlmQA(object):
       all_results = []
       for data in data_list:
         if data['uriType'] == 'webpage':
-          loader = WebBaseLoader(data['uri'])
+          loader = UTF8WebBaseLoader(data['uri'])
           text_splitter = RecursiveCharacterTextSplitter(
-              chunk_size = 1000,
+              chunk_size = 800,
               chunk_overlap  = 20,
               length_function = len,
           )
@@ -78,16 +99,38 @@ class LlmQA(object):
     def answer(self, query):
         if not query:
             return None  # empty user query
+
+        prompt_template = """Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
+
+        {context}
+        
+        Question: {question}
+        Answer in Chinese:"""
+
+        PROMPT = PromptTemplate(
+            template=prompt_template, input_variables=["context", "question"]
+        )
+
         similar_results = self.db.similarity_search(query)
         num_found_result = len(similar_results)
         print(f"found {num_found_result} similar docs for user query {query}")
-        chain = load_qa_chain(OpenAI(temperature=0), chain_type="stuff")
+        debug_docs = []
+        for r in similar_results:
+            debug_docs.append(r.page_content.replace(' ', '').replace('\n', ''))
+        chain = load_qa_chain(OpenAI(temperature=0, max_tokens=1024), chain_type="stuff", prompt=PROMPT)
         # TODO(xiao): due to LLM word limitation, only use the first doc
-        return chain.run(input_documents=similar_results[:3], question=query)
+        return (chain.run(input_documents=similar_results[:2], question=query), debug_docs)
 
 if __name__ == '__main__':
     qa = LlmQA([])  # TODO: empty allowlist
     init_query = u"如何解读数字农业农村发展规划"
-    qa.prepare_doc(init_query)
-    query = u"这里面的数字化机会有哪些？"
-    print(qa.answer(query))
+    query = u" 请帮我分析医保政策"
+    qa.prepare_doc(query)
+    #query = u"这里面的数字化机会有哪些？"
+    output, debug_docs = qa.answer(query)
+    print("debug docs:")
+    for doc in debug_docs:
+        print("\n------")
+        print(doc)
+        print("------\n")
+    print("output: " + output)

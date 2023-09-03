@@ -7,7 +7,7 @@ python -m venv llm
 
 # install packages
 llm/bin/pip install -q langchain==0.0.150 pypdf pandas matplotlib tiktoken textract transformers openai faiss-cpu
-llm/bin/pip install flask
+llm/bin/pip install flask requests
 ```
 
 # test locally:
